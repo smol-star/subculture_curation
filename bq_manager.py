@@ -81,20 +81,22 @@ def insert_records(records):
         return True
 
     client = get_bq_client()
-    table_ref = bigquery.TableReference(
-        bigquery.DatasetReference(PROJECT_ID, DATASET_ID), TABLE_ID
+    table_id = f"{PROJECT_ID}.{DATASET_ID}.{TABLE_ID}"
+    
+    # 무료 티어 전용: 배치 로드(Batch Load) 방식 사용 (스트리밍 인서트 제한 우회)
+    job_config = bigquery.LoadJobConfig(
+        source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+        write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
     )
 
     try:
-        errors = client.insert_rows_json(table_ref, new_records)
-        if errors == []:
-            print(f"[BQ] {len(new_records)}개 신규 레코드 저장 성공. (중복 제외 {len(records) - len(new_records)}건)")
-            return True
-        else:
-            print(f"[BQ Insert Error] {errors}")
-            return False
-    except GoogleAPIError as e:
-        print(f"[BQ API Error] {e}")
+        # insert_rows_json 대신 load_table_from_json 사용
+        load_job = client.load_table_from_json(new_records, table_id, job_config=job_config)
+        load_job.result()  # 잡 완료 대기
+        print(f"[BQ] {len(new_records)}개 신규 레코드가 배치 로드(무료 티어 공식 지원 방식)로 저장되었습니다.")
+        return True
+    except Exception as e:
+        print(f"[BQ Load Error] {e}")
         return False
 
 if __name__ == "__main__":

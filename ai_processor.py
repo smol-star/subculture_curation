@@ -46,8 +46,8 @@ def curate_and_generate_scripts(raw_items):
     if not raw_items or not init_gemini():
         return raw_items
         
-    flash_model = get_model(['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'])
-    pro_model = get_model(['gemini-2.5-pro', 'gemini-2.0-pro', 'gemini-1.5-pro', 'gemini-pro'])
+    flash_model = get_model(['gemini-1.5-flash', 'gemini-2.0-flash', 'gemini-2.5-flash'])
+    pro_model = get_model(['gemini-1.5-pro', 'gemini-2.0-pro', 'gemini-pro'])
     
     if not flash_model or not pro_model:
          print("[AI Error] 적합한 제미나이 모델을 찾을 수 없습니다.")
