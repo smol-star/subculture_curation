@@ -21,35 +21,43 @@ def get_client():
     return _client
 
 def get_available_model():
-    """사용 가능한 모델 목록을 출력하고 최적의 모델(1.5-flash)을 선택"""
+    """2026년 4월 표준: Gemini 3.1 시리즈 중 무료 티어 최적 모델 선정"""
     client = get_client()
-    if not client: return "gemini-1.5-flash" # 폴백
+    if not client: return "gemini-3.1-flash-lite" 
     
     try:
-        # 새로운 SDK의 모델 리스트 조회 방식
+        # 가용 모델 목록 조회
         models = [m.name for m in client.models.list()]
+        print(f"   [AI] 2026 리얼타임 모델 리스트: {models}")
         
-        # 429 에러가 잦은 2.0, 2.5, 3.1 시리즈는 제외 (블랙리스트)
-        blacklist = ['2.0', '2.5', '3.1', 'pro-latest', 'ultra']
-        
-        # 안전한 1.5 시리즈 (화이트리스트)
-        safe_keywords = ['1.5-flash', '1.5-pro', 'gemini-1.0-pro']
+        # 3.1 시리즈 중 무료 티어에서 가장 안정적인 순서
+        # (Flash-Lite가 쿼터가 가장 많고 Flash가 그 다음임)
+        preferences = [
+            'gemini-3.1-flash-lite', 
+            'gemini-3.1-flash',
+            '3.1-flash',
+            '2.0-flash' # 3.1이 없을 경우의 폴백
+        ]
         
         selected = None
-        for kw in safe_keywords:
+        for pref in preferences:
             for m in models:
-                if kw in m and not any(bl in m for bl in blacklist):
+                if pref in m:
                     selected = m
                     break
             if selected: break
             
         if selected:
-            print(f"   [AI] 최신 SDK로 선택된 모델: {selected}")
+            print(f"   [AI] ✨ 2026 표준 모델 선택 성공: {selected}")
             return selected
+        elif models:
+            # 3.1 키워드가 없으면 가용한 모델 중 가장 가벼운 것 선택
+            return models[0]
+            
     except Exception as e:
         print(f"   [AI Model List Error] {e}")
         
-    return "gemini-1.5-flash"
+    return "gemini-3.1-flash-lite" # 최후의 보루
 
 def clean_text(text):
     if not text: return ""
