@@ -18,11 +18,23 @@ import re
 def get_model(preference_list):
     """우선순위 리스트(preference_list)에 따라 가장 적절한 모델을 찾아 반환"""
     available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+    selected_model_name = None
+    
     for pref in preference_list:
         for m in available_models:
             if pref in m:
-                return genai.GenerativeModel(m)
-    return genai.GenerativeModel(available_models[0]) if available_models else None
+                selected_model_name = m
+                break
+        if selected_model_name:
+            break
+            
+    if not selected_model_name and available_models:
+        selected_model_name = available_models[0]
+        
+    if selected_model_name:
+        print(f"   [AI] 모델 선택 완료: {selected_model_name}")
+        return genai.GenerativeModel(selected_model_name)
+    return None
 
 def clean_text(text):
     if not text: return ""
