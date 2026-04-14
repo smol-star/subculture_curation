@@ -27,8 +27,9 @@ def load_bq_data():
     client = get_bq_client()
     query = """
         SELECT * FROM `modular-sign-491913-u6.subculture.curation_data`
+        WHERE timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 3 DAY)
         ORDER BY timestamp DESC
-        LIMIT 50
+        LIMIT 100
     """
     import db_dtypes
     return client.query(query).to_dataframe()

@@ -13,13 +13,23 @@ def init_gemini():
     genai.configure(api_key=api_key)
     return True
 
-def get_model(preference):
-    """지정된 이름과 가장 유사한 모델을 찾아 반환"""
+import re
+
+def get_model(preference_list):
+    """우선순위 리스트(preference_list)에 따라 가장 적절한 모델을 찾아 반환"""
     available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-    for m in available_models:
-        if preference in m:
-            return genai.GenerativeModel(m)
+    for pref in preference_list:
+        for m in available_models:
+            if pref in m:
+                return genai.GenerativeModel(m)
     return genai.GenerativeModel(available_models[0]) if available_models else None
+
+def clean_text(text):
+    if not text: return ""
+    text = re.sub(r'<[^>]+>', '', text)
+    text = re.sub(r'\?[^ ]*', '', text)
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text[:1000]
 
 def curate_and_generate_scripts(raw_items):
     """
@@ -36,8 +46,8 @@ def curate_and_generate_scripts(raw_items):
     if not raw_items or not init_gemini():
         return raw_items
         
-    flash_model = get_model('gemini-1.5-flash')
-    pro_model = get_model('gemini-1.5-pro')
+    flash_model = get_model(['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'])
+    pro_model = get_model(['gemini-2.5-pro', 'gemini-2.0-pro', 'gemini-1.5-pro', 'gemini-pro'])
     
     if not flash_model or not pro_model:
          print("[AI Error] 적합한 제미나이 모델을 찾을 수 없습니다.")
@@ -46,14 +56,19 @@ def curate_and_generate_scripts(raw_items):
     print(f"   [Step 1] Flash 모델을 통한 가벼운 1차 핫이슈 선별 시작 (총 {len(raw_items)}개 후보)")
     
     # 1. Flash 필터링 프롬프트
-    step1_prompt = """너는 글로벌 서브컬처 큐레이터 편집장이다.
+    step1_prompt = """너는 글로벌 서브컬처 큐레이터 편집장이다. 인간처럼 말하지 마라.
 비용 절감을 위해 아래 리스트의 '제목'과 '추천수'만 가볍게 보고, "가장 자극적이고 유튜브 쇼츠로 만들 만한" 파급력 있는 뉴스 2개 이하를 골라라.
-결과는 오직 선택된 항목의 'content_url' 값이 담긴 JSON 문자열 리스트(Array of strings)로만 출력해라.
+
+[출력 규칙 — 최우선 적용]
+- 응답의 첫 번째 문자는 반드시 [ 이어야 한다.
+- JSON 배열(Array) 외에 어떤 텍스트도 추가하지 마라. "네, 알겠습니다" 같은 문구는 시스템 오류를 낸다.
+- 결과는 오직 선택된 항목의 'content_url' 값이 담긴 문자열 배열(예: ["url1", "url2"]) 로만 출력.
 
 [입력 후보]
 """
     for item in raw_items:
-        step1_prompt += f"- [URL: {item['content_url']}] (추천수: {item['engagement_score']}) 제목: {item['title']}\n"
+        clean_title = clean_text(item['title'])
+        step1_prompt += f"- [URL: {item['content_url']}] (추천수: {item['engagement_score']}) 제목: {clean_title}\n"
         
     hot_urls = []
     try:
@@ -73,15 +88,19 @@ def curate_and_generate_scripts(raw_items):
             print(f"   [Step 2] Pro 모델로 정밀 번역 및 대본 가공 중... ({item['title'][:20]}...)")
             item["is_hot"] = True
             
-            step2_prompt = f"""너는 '전문 글로벌 서브컬처 큐레이터'이며 유튜브 쇼츠 작가이다.
+            step2_prompt = f"""너는 '전문 글로벌 서브컬처 큐레이터'이며 유튜브 쇼츠 작가이다. 인간처럼 말하지 마라.
 아래 주어진 원문을 분석하고, 다음 작업들을 수행하여 반환해라.
+
+[출력 규칙 — 최우선 적용]
+- 응답의 첫 번째 문자는 반드시 {{ 이어야 한다.
+- "알겠습니다", "분석 결과입니다" 등의 텍스트를 절대 쓰지 마라.
+- 반드시 아래 2개 키를 가진 단일 JSON 객체(Dictionary) 구조로 응답해라.
 
 1. "translated_full_text": 원문 전체의 정밀한 한국어 통번역본 (팩트체크 용도).
 2. "ai_summary": 요약을 기반으로 '초반 3초 후킹(Hook)'이 포함된 강력한 유튜브 쇼츠 나레이션 대본 (3~4문장 분량). 
 
-반드시 위 2개 키를 가진 단일 JSON 객체(Dictionary) 구조로 응답해라.
-원문 제목: {item['title']}
-원문 텍스트: {item['raw_text']}
+원문 제목: {clean_text(item['title'])}
+원문 텍스트: {clean_text(item['raw_text'])}
 """
             try:
                 res2 = pro_model.generate_content(step2_prompt).text.strip()

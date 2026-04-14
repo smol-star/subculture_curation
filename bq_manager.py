@@ -3,40 +3,57 @@ from google.cloud import bigquery
 from google.api_core.exceptions import GoogleAPIError
 from datetime import datetime, timezone
 
-# GCP Credentials from ENV or User settings
-# Expected to have GOOGLE_APPLICATION_CREDENTIALS set
-
+PROJECT_ID = "modular-sign-491913-u6"
 DATASET_ID = "subculture"
 TABLE_ID = "curation_data"
 
 def get_bq_client():
-    return bigquery.Client()
+    creds_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+    if not creds_path:
+        raise ValueError("[BQ] GOOGLE_APPLICATION_CREDENTIALS 환경 변수가 설정되지 않았습니다.")
+    if not os.path.exists(creds_path):
+        raise FileNotFoundError(f"[BQ] 인증 파일을 찾을 수 없습니다: {creds_path}")
+    # 프로젝트 ID를 명시적으로 지정
+    return bigquery.Client(project=PROJECT_ID)
+
+def get_existing_urls(limit=150):
+    """중복 저장을 막기 위해 최근 저장된 URL 리스트를 가져옴"""
+    client = get_bq_client()
+    query = f"SELECT content_url FROM `{PROJECT_ID}.{DATASET_ID}.{TABLE_ID}` ORDER BY timestamp DESC LIMIT {limit}"
+    try:
+        results = client.query(query).to_dataframe()
+        if results.empty:
+            return set()
+        return set(results['content_url'].tolist())
+    except Exception as e:
+        print(f"[BQ Archive Search Error] {e}")
+        return set()
 
 def init_subculture_dataset_and_table():
     client = get_bq_client()
-    dataset_ref = client.dataset(DATASET_ID)
-    
+    # 프로젝트 명시
+    dataset_ref = bigquery.DatasetReference(PROJECT_ID, DATASET_ID)
+
     try:
         client.get_dataset(dataset_ref)
         print(f"[BQ] Dataset '{DATASET_ID}' 이미 존재합니다.")
     except Exception:
-        # Create dataset
         dataset = bigquery.Dataset(dataset_ref)
         dataset.location = "US"
-        dataset = client.create_dataset(dataset, timeout=30)
+        client.create_dataset(dataset, timeout=30)
         print(f"[BQ] Dataset '{DATASET_ID}' 생성 완료.")
 
-    table_ref = dataset_ref.table(TABLE_ID)
+    table_ref = bigquery.TableReference(dataset_ref, TABLE_ID)
     schema = [
-        bigquery.SchemaField("source_country", "STRING", description="국가 (미국, 일본, 한국, 중국)"),
-        bigquery.SchemaField("platform", "STRING", description="사이트명 (Reddit, Famitsu 등)"),
-        bigquery.SchemaField("title", "STRING", description="원문 제목"),
-        bigquery.SchemaField("content_url", "STRING", description="글/뉴스 원문 링크"),
-        bigquery.SchemaField("timestamp", "TIMESTAMP", description="수집 시간"),
-        bigquery.SchemaField("engagement_score", "INT64", description="추천수, 조회수 등 트렌드 지표"),
-        bigquery.SchemaField("translated_full_text", "STRING", description="원문 전체의 한국어 통번역본 (팩트체크용)"),
-        bigquery.SchemaField("ai_summary", "STRING", description="Gemini API가 요약 및 번역한 쇼츠용 대본 초안"),
-        bigquery.SchemaField("is_hot", "BOOLEAN", description="트렌드 여부 플래그 (쇼츠 제작 가치)")
+        bigquery.SchemaField("source_country", "STRING"),
+        bigquery.SchemaField("platform", "STRING"),
+        bigquery.SchemaField("title", "STRING"),
+        bigquery.SchemaField("content_url", "STRING"),
+        bigquery.SchemaField("timestamp", "TIMESTAMP"),
+        bigquery.SchemaField("engagement_score", "INT64"),
+        bigquery.SchemaField("translated_full_text", "STRING"),
+        bigquery.SchemaField("ai_summary", "STRING"),
+        bigquery.SchemaField("is_hot", "BOOLEAN"),
     ]
 
     try:
@@ -44,29 +61,34 @@ def init_subculture_dataset_and_table():
         print(f"[BQ] Table '{TABLE_ID}' 이미 존재합니다.")
     except Exception:
         table = bigquery.Table(table_ref, schema=schema)
-        # 파티셔닝 적용 (무료 스캔 최적화)
         table.time_partitioning = bigquery.TimePartitioning(
             type_=bigquery.TimePartitioningType.DAY,
             field="timestamp"
         )
-        table = client.create_table(table)
+        client.create_table(table)
         print(f"[BQ] Table '{TABLE_ID}' 생성 완료.")
 
 def insert_records(records):
-    """
-    records: list of dict matches the BQ schema.
-    Returns: bool (Success)
-    """
     if not records:
         return True
 
-    client = get_bq_client()
-    table_ref = client.dataset(DATASET_ID).table(TABLE_ID)
+    # 중복 필터링 (최근에 저장된 URL을 제외)
+    existing_urls = get_existing_urls()
+    new_records = [r for r in records if r.get('content_url') not in existing_urls]
     
+    if not new_records:
+        print(f"[BQ] 수집된 {len(records)}개의 기사가 모두 이미 저장된 데이터입니다. (중복 방지)")
+        return True
+
+    client = get_bq_client()
+    table_ref = bigquery.TableReference(
+        bigquery.DatasetReference(PROJECT_ID, DATASET_ID), TABLE_ID
+    )
+
     try:
-        errors = client.insert_rows_json(table_ref, records)
+        errors = client.insert_rows_json(table_ref, new_records)
         if errors == []:
-            print(f"[BQ] {len(records)}개의 서브컬처 레코드 저장 성공.")
+            print(f"[BQ] {len(new_records)}개 신규 레코드 저장 성공. (중복 제외 {len(records) - len(new_records)}건)")
             return True
         else:
             print(f"[BQ Insert Error] {errors}")
