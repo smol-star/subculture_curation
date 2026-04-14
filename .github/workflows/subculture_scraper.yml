@@ -10,14 +10,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
+      
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
+          
       - name: Install dependencies
         run: pip install -r requirements.txt
+        
       - name: Create GCP Credentials JSON
-        run: echo "${{ secrets.GCP_CREDENTIALS }}" > gcp_key.json
+        # 직접 echo 대신 환경 변수를 통해 안전하게 파일을 생성합니다.
+        run: echo "$GCP_KEY_JSON" > gcp_key.json
+        env:
+          GCP_KEY_JSON: ${{ secrets.GCP_CREDENTIALS }}
+        
       - name: Run Pipeline
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
