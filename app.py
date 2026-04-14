@@ -34,11 +34,12 @@ def load_data():
         client = bigquery.Client()
         
     query = """
-        SELECT * FROM `subculture.curation_data` 
+        SELECT * FROM `modular-sign-491913-u6.subculture.curation_data` 
         ORDER BY timestamp DESC 
         LIMIT 50
     """
-    return client.query(query).to_dataframe()
+    df = client.query(query).to_dataframe()
+    return df
 
 st.markdown('<div class="nav-header">🎬 서브컬처 쇼츠 기획 센터</div>', unsafe_allow_html=True)
 st.write("실시간 글로벌 서브컬처 정보를 분석하여 쇼츠 대본 초안을 제공합니다.")
@@ -93,4 +94,4 @@ try:
 
 except Exception as e:
     st.error(f"데이터 로드 실패: {e}")
-    st.info("💡 처음 실행하셨나요? 서버에서 정보 수집을 먼저 실행하거나, 구글 클라우드 보안키(.json) 연동이 필요합니다.")
+    st.info("💡 처음 실행하셨나요? GitHub Actions에서 파이프라인을 1회 수동 실행하거나, 구글 클라우드 보안키(.json) 연동이 필요합니다.")

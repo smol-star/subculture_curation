@@ -27,6 +27,12 @@ def curate_and_generate_scripts(raw_items):
     STEP 1: 저렴한 Flash 모델을 이용해 핫 토픽(쇼츠 제작용) URL 2~3개만 선별
     STEP 2: 선별된 원문에만 고성능 Pro 모델을 사용해 전체 번역 및 쇼츠 대본 가공
     """
+    # 항상 BQ 필수 필드가 있도록 기본값 사전 세팅
+    for item in raw_items:
+        item.setdefault("ai_summary", "[미처리] AI 큐레이션 대기 중")
+        item.setdefault("translated_full_text", "[미처리] 번역 대기 중")
+        item.setdefault("is_hot", False)
+
     if not raw_items or not init_gemini():
         return raw_items
         
