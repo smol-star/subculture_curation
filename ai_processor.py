@@ -16,28 +16,43 @@ def init_gemini():
 import re
 
 def get_model(preference_list):
-    """우선순위 리스트(preference_list)에 따라 가장 적절한 모델을 찾아 반환"""
-    available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-    selected_model_name = None
-    
-    for pref in preference_list:
-        for m in available_models:
-            if pref in m:
-                selected_model_name = m
-                break
-        if selected_model_name:
-            break
-            
-    if not selected_model_name and available_models:
-        selected_model_name = available_models[0]
+    """사용 가능한 모델 목록을 출력하고 안전한 1.5 시리즈를 우선 선택"""
+    try:
+        models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
         
-    if selected_model_name:
-        print(f"   [AI] 모델 선택 완료: {selected_model_name}")
-        return genai.GenerativeModel(selected_model_name)
-    return None
+        # 429 에러가 잦은 2.0, 2.5를 피하고 가장 안정적인 1.5 시리즈 강제 우선순위
+        safe_prefs = ['models/gemini-1.5-flash', 'models/gemini-1.5-pro', 'models/gemini-pro']
+        
+        selected = None
+        for sp in safe_prefs:
+            if sp in models:
+                selected = sp
+                break
+        
+        if not selected:
+            # 안전 목록에 없으면 입력받은 preference_list에서 탐색
+            for pref in preference_list:
+                for m in models:
+                    if pref in m:
+                        selected = m
+                        break
+                if selected: break
+        
+        if not selected and models:
+            selected = models[0]
+            
+        if selected:
+            print(f"   [AI] 모델 선택: {selected}")
+            return genai.GenerativeModel(selected)
+    except Exception as e:
+        print(f"   [AI Model List Error] {e}")
+        
+    # 최후의 수단 (하드코딩된 모델명)
+    return genai.GenerativeModel('gemini-1.5-flash')
 
 def clean_text(text):
     if not text: return ""
+    # HTML 태그 및 URL 파라미터 제거하여 토큰 절약
     text = re.sub(r'<[^>]+>', '', text)
     text = re.sub(r'\?[^ ]*', '', text)
     text = re.sub(r'\s+', ' ', text).strip()
@@ -58,8 +73,8 @@ def curate_and_generate_scripts(raw_items):
     if not raw_items or not init_gemini():
         return raw_items
         
-    flash_model = get_model(['gemini-1.5-flash', 'gemini-2.0-flash', 'gemini-2.5-flash'])
-    pro_model = get_model(['gemini-1.5-pro', 'gemini-2.0-pro', 'gemini-pro'])
+    flash_model = get_model(['gemini-1.5-flash', 'gemini-2.0-flash'])
+    pro_model = get_model(['gemini-1.5-pro', 'gemini-pro'])
     
     if not flash_model or not pro_model:
          print("[AI Error] 적합한 제미나이 모델을 찾을 수 없습니다.")
