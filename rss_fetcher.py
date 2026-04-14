@@ -46,8 +46,9 @@ def fetch_rss_sources(limit_per_source=5):
         # 미국 - 전문 웹진 (안정적인 RSS)
         {"name": "Anime News Network", "url": "https://www.animenewsnetwork.com/all/rss.xml?ann-edition=us", "country": "미국"},
         {"name": "Gematsu (게임 뉴스)", "url": "https://www.gematsu.com/feed", "country": "미국"},
-        # 일본 (영문 서비스)
-        {"name": "Famitsu (영문)", "url": "https://www.famitsu.com/feed", "country": "일본"},
+        # 일본 (영미권/현지 믹스)
+        {"name": "Siliconera (일본겜 특화)", "url": "https://www.siliconera.com/feed/", "country": "일본"},
+        {"name": "Famitsu (현지 원문)", "url": "https://www.famitsu.com/rss/fcom_all.rdf", "country": "일본"},
     ]
 
     raw_data = []
