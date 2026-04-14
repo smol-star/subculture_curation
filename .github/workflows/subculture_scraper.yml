@@ -5,6 +5,9 @@ on:
     - cron: '0 */3 * * *' # 3시간마다 실행
   workflow_dispatch:      # 수동 실행 버튼
 
+permissions:
+  contents: write
+
 jobs:
   run_curation:
     runs-on: ubuntu-latest
@@ -20,13 +23,22 @@ jobs:
         run: pip install -r requirements.txt
         
       - name: Create GCP Credentials JSON
-        # 직접 echo 대신 환경 변수를 통해 안전하게 파일을 생성합니다.
-        run: echo "$GCP_KEY_JSON" > gcp_key.json
-        env:
-          GCP_KEY_JSON: ${{ secrets.GCP_CREDENTIALS }}
+        run: echo "${{ secrets.GCP_CREDENTIALS }}" > gcp_key.json
         
       - name: Run Pipeline
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GOOGLE_APPLICATION_CREDENTIALS: gcp_key.json
         run: python main.py
+
+      - name: Commit and Push Archive Data
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git add hourly_archive/
+          git commit -m "Auto-update Subculture Archive [skip ci]" || echo "No changes to commit"
+          for i in 1 2 3; do
+            git pull --rebase origin main && git push && break
+            echo "Push failed, retrying..."
+            sleep 5
+          done
