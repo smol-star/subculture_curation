@@ -1,6 +1,6 @@
 feedparser
 beautifulsoup4
-google-generativeai
+google-genai
 google-cloud-bigquery
 db-dtypes
 pandas

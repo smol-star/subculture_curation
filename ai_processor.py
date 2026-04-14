@@ -1,37 +1,41 @@
 import os
 import json
-import google.generativeai as genai
+import re
+from google import genai
+from google.genai import types
 from dotenv import load_dotenv
 
 load_dotenv()
 
-def init_gemini():
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        print("[AI Error] GEMINI_API_KEY가 없습니다.")
-        return False
-    genai.configure(api_key=api_key)
-    return True
+# 전역 클라이언트 변수 (지연 초기화)
+_client = None
 
-import re
+def get_client():
+    global _client
+    if _client is None:
+        api_key = os.environ.get("GEMINI_API_KEY")
+        if not api_key:
+            print("[AI Error] GEMINI_API_KEY가 환경 변수에 없습니다.")
+            return None
+        _client = genai.Client(api_key=api_key)
+    return _client
 
-def get_model(preference_list):
-    """사용 가능한 모델 목록을 출력하고 안전한 1.5 시리즈를 우선 선택 (2.0/2.5 차단)"""
+def get_available_model():
+    """사용 가능한 모델 목록을 출력하고 최적의 모델(1.5-flash)을 선택"""
+    client = get_client()
+    if not client: return "gemini-1.5-flash" # 폴백
+    
     try:
-        models_raw = genai.list_models()
-        models = [m.name for m in models_raw if 'generateContent' in m.supported_generation_methods]
+        # 새로운 SDK의 모델 리스트 조회 방식
+        models = [m.name for m in client.models.list()]
         
-        # 디버깅용 로그: 현재 인식되는 모든 모델명 출력
-        # print(f"   [AI] 인식된 모든 모델: {models}")
+        # 429 에러가 잦은 2.0, 2.5, 3.1 시리즈는 제외 (블랙리스트)
+        blacklist = ['2.0', '2.5', '3.1', 'pro-latest', 'ultra']
         
-        # 쿼터가 0이거나 제한이 매우 엄격한 모델들 (블랙리스트)
-        blacklist = ['2.0', '2.5']
-        
-        # 안전한 1.5 시리즈 및 기본 모델 (화이트리스트 키워드)
-        safe_keywords = ['1.5-flash', '1.5-pro', 'gemini-pro']
+        # 안전한 1.5 시리즈 (화이트리스트)
+        safe_keywords = ['1.5-flash', '1.5-pro', 'gemini-1.0-pro']
         
         selected = None
-        # 1순위: 화이트리스트 키워드가 포함되면서 블랙리스트가 아닌 모델 탐색
         for kw in safe_keywords:
             for m in models:
                 if kw in m and not any(bl in m for bl in blacklist):
@@ -39,122 +43,88 @@ def get_model(preference_list):
                     break
             if selected: break
             
-        if not selected:
-            # 2순위: 블랙리스트가 아닌 모델 중 아무거나 탐색
-            for m in models:
-                if not any(bl in m for bl in blacklist):
-                    selected = m
-                    break
-        
         if selected:
-            print(f"   [AI] 안전 모델 강제 선택: {selected}")
-            return genai.GenerativeModel(selected)
+            print(f"   [AI] 최신 SDK로 선택된 모델: {selected}")
+            return selected
     except Exception as e:
         print(f"   [AI Model List Error] {e}")
         
-    # 최후의 수단: 리스트 조회 실패 시에도 1.5-flash로 강제 시도
-    return genai.GenerativeModel('gemini-1.5-flash')
+    return "gemini-1.5-flash"
 
 def clean_text(text):
     if not text: return ""
-    # HTML 태그 및 URL 파라미터 제거하여 토큰 절약
     text = re.sub(r'<[^>]+>', '', text)
     text = re.sub(r'\?[^ ]*', '', text)
     text = re.sub(r'\s+', ' ', text).strip()
     return text[:1000]
 
 def curate_and_generate_scripts(raw_items):
-    """
-    [API 절약형 Two-Step 처리]
-    STEP 1: 저렴한 Flash 모델을 이용해 핫 토픽(쇼츠 제작용) URL 2~3개만 선별
-    STEP 2: 선별된 원문에만 고성능 Pro 모델을 사용해 전체 번역 및 쇼츠 대본 가공
-    """
-    # 항상 BQ 필수 필드가 있도록 기본값 사전 세팅
+    """최신 google-genai SDK를 사용한 2단계 큐레이션"""
+    client = get_client()
+    if not client: return raw_items
+
+    # 1. 모델 결정
+    model_id = get_available_model()
+
+    # 결과값 기본 세팅
     for item in raw_items:
         item.setdefault("ai_summary", "[미처리] AI 큐레이션 대기 중")
         item.setdefault("translated_full_text", "[미처리] 번역 대기 중")
         item.setdefault("is_hot", False)
 
-    if not raw_items or not init_gemini():
-        return raw_items
-        
-    flash_model = get_model(['gemini-1.5-flash', 'gemini-2.0-flash'])
-    pro_model = get_model(['gemini-1.5-pro', 'gemini-pro'])
+    if not raw_items: return raw_items
+
+    print(f"   [Step 1] 최신 SDK 기반 핫이슈 선별 시작 (대상: {len(raw_items)}개)")
     
-    if not flash_model or not pro_model:
-         print("[AI Error] 적합한 제미나이 모델을 찾을 수 없습니다.")
-         return raw_items
-
-    print(f"   [Step 1] Flash 모델을 통한 가벼운 1차 핫이슈 선별 시작 (총 {len(raw_items)}개 후보)")
-    
-    # 1. Flash 필터링 프롬프트
-    step1_prompt = """너는 글로벌 서브컬처 큐레이터 편집장이다. 인간처럼 말하지 마라.
-비용 절감을 위해 아래 리스트의 '제목'과 '추천수'만 가볍게 보고, "가장 자극적이고 유튜브 쇼츠로 만들 만한" 파급력 있는 뉴스 2개 이하를 골라라.
-
-[출력 규칙 — 최우선 적용]
-- 응답의 첫 번째 문자는 반드시 [ 이어야 한다.
-- JSON 배열(Array) 외에 어떤 텍스트도 추가하지 마라. "네, 알겠습니다" 같은 문구는 시스템 오류를 낸다.
-- 결과는 오직 선택된 항목의 'content_url' 값이 담긴 문자열 배열(예: ["url1", "url2"]) 로만 출력.
-
-[입력 후보]
-"""
+    # --- STEP 1: 핫이슈 선별 ---
+    step1_system = "너는 글로벌 서브컬처 큐레이터 편집장이다. 결과는 반드시 JSON 배열로만 출력하라."
+    step1_content = "아래 리스트 중 유튜브 쇼츠로 만들 만한 자극적인 뉴스 2개 이하를 골라 'content_url' 배열만 반환해.\n\n"
     for item in raw_items:
-        clean_title = clean_text(item['title'])
-        step1_prompt += f"- [URL: {item['content_url']}] (추천수: {item['engagement_score']}) 제목: {clean_title}\n"
-        
+        step1_content += f"- [URL: {item['content_url']}] 제목: {clean_text(item['title'])}\n"
+
     hot_urls = []
     try:
-        res1 = flash_model.generate_content(step1_prompt).text.strip()
-        start = res1.find('[')
-        end = res1.rfind(']')
-        if start != -1 and end != -1:
-            hot_urls = json.loads(res1[start:end+1])
+        response = client.models.generate_content(
+            model=model_id,
+            contents=step1_content,
+            config=types.GenerateContentConfig(
+                system_instruction=step1_system,
+                temperature=0.2,
+                response_mime_type="application/json"
+            )
+        )
+        # response.text가 직접 JSON일 확률이 높음 (mime_type 설정 시)
+        res_text = response.text.strip()
+        hot_urls = json.loads(res_text)
     except Exception as e:
         print(f"   [Step 1 AI Failed] {e}")
 
-    print(f"   -> Flash 에 의해 선정된 핫이슈 갯수: {len(hot_urls)}개")
+    print(f"   -> 선정된 핫이슈 개수: {len(hot_urls)}개")
 
-    # 2. Pro 정밀 모드 프롬프트 구성 및 처리
+    # --- STEP 2: 정밀 가공 ---
     for item in raw_items:
         if item["content_url"] in hot_urls:
-            print(f"   [Step 2] Pro 모델로 정밀 번역 및 대본 가공 중... ({item['title'][:20]}...)")
+            print(f"   [Step 2] 정밀 대본 가공 중... ({item['title'][:20]}...)")
             item["is_hot"] = True
             
-            step2_prompt = f"""너는 '전문 글로벌 서브컬처 큐레이터'이며 유튜브 쇼츠 작가이다. 인간처럼 말하지 마라.
-아래 주어진 원문을 분석하고, 다음 작업들을 수행하여 반환해라.
+            step2_system = "너는 전문 서브컬처 큐레이터이자 쇼츠 작가이다. 한국어로 응답하며 JSON 객체로 반환하라."
+            step2_prompt = f"""원문 제목: {item['title']}\n원문 요약: {item['raw_text']}\n
+            위 내용을 바탕으로 'translated_full_text'(통번역)와 'ai_summary'(3~4문장의 쇼츠 대본)를 작성해."""
 
-[출력 규칙 — 최우선 적용]
-- 응답의 첫 번째 문자는 반드시 {{ 이어야 한다.
-- "알겠습니다", "분석 결과입니다" 등의 텍스트를 절대 쓰지 마라.
-- 반드시 아래 2개 키를 가진 단일 JSON 객체(Dictionary) 구조로 응답해라.
-
-1. "translated_full_text": 원문 전체의 정밀한 한국어 통번역본 (팩트체크 용도).
-2. "ai_summary": 요약을 기반으로 '초반 3초 후킹(Hook)'이 포함된 강력한 유튜브 쇼츠 나레이션 대본 (3~4문장 분량). 
-
-원문 제목: {clean_text(item['title'])}
-원문 텍스트: {clean_text(item['raw_text'])}
-"""
             try:
-                res2 = pro_model.generate_content(step2_prompt).text.strip()
-                s = res2.find('{')
-                e = res2.rfind('}')
-                if s != -1 and e != -1:
-                    parsed = json.loads(res2[s:e+1])
-                    item["translated_full_text"] = parsed.get("translated_full_text", "번역 실패")
-                    item["ai_summary"] = parsed.get("ai_summary", "대본 가공 실패")
-                else:
-                     item["translated_full_text"] = "JSON 파싱 에러"
-                     item["ai_summary"] = res2
+                response2 = client.models.generate_content(
+                    model=model_id,
+                    contents=step2_prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=step2_system,
+                        temperature=0.7,
+                        response_mime_type="application/json"
+                    )
+                )
+                parsed = json.loads(response2.text)
+                item["translated_full_text"] = parsed.get("translated_full_text", "번역 실패")
+                item["ai_summary"] = parsed.get("ai_summary", "대본 가공 실패")
             except Exception as e:
-                item["translated_full_text"] = f"Pro 모델 반환 에러: {e}"
-                item["ai_summary"] = "처리 불가"
-        else:
-             # 선택받지 못한 항목들
-             item["is_hot"] = False
-             item["translated_full_text"] = "[비용 절감] Flash 1차 필터링 탈락으로 인해 통번역 생략됨."
-             item["ai_summary"] = "[비용 절감] 쇼츠 가치 낮음으로 판정되어 대본 가공 생략."
-    
+                item["translated_full_text"] = f"AI 처리 에러: {e}"
+                
     return raw_items
-
-if __name__ == "__main__":
-    pass
