@@ -16,38 +16,43 @@ def init_gemini():
 import re
 
 def get_model(preference_list):
-    """사용 가능한 모델 목록을 출력하고 안전한 1.5 시리즈를 우선 선택"""
+    """사용 가능한 모델 목록을 출력하고 안전한 1.5 시리즈를 우선 선택 (2.0/2.5 차단)"""
     try:
-        models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        models_raw = genai.list_models()
+        models = [m.name for m in models_raw if 'generateContent' in m.supported_generation_methods]
         
-        # 429 에러가 잦은 2.0, 2.5를 피하고 가장 안정적인 1.5 시리즈 강제 우선순위
-        safe_prefs = ['models/gemini-1.5-flash', 'models/gemini-1.5-pro', 'models/gemini-pro']
+        # 디버깅용 로그: 현재 인식되는 모든 모델명 출력
+        # print(f"   [AI] 인식된 모든 모델: {models}")
+        
+        # 쿼터가 0이거나 제한이 매우 엄격한 모델들 (블랙리스트)
+        blacklist = ['2.0', '2.5']
+        
+        # 안전한 1.5 시리즈 및 기본 모델 (화이트리스트 키워드)
+        safe_keywords = ['1.5-flash', '1.5-pro', 'gemini-pro']
         
         selected = None
-        for sp in safe_prefs:
-            if sp in models:
-                selected = sp
-                break
-        
-        if not selected:
-            # 안전 목록에 없으면 입력받은 preference_list에서 탐색
-            for pref in preference_list:
-                for m in models:
-                    if pref in m:
-                        selected = m
-                        break
-                if selected: break
-        
-        if not selected and models:
-            selected = models[0]
+        # 1순위: 화이트리스트 키워드가 포함되면서 블랙리스트가 아닌 모델 탐색
+        for kw in safe_keywords:
+            for m in models:
+                if kw in m and not any(bl in m for bl in blacklist):
+                    selected = m
+                    break
+            if selected: break
             
+        if not selected:
+            # 2순위: 블랙리스트가 아닌 모델 중 아무거나 탐색
+            for m in models:
+                if not any(bl in m for bl in blacklist):
+                    selected = m
+                    break
+        
         if selected:
-            print(f"   [AI] 모델 선택: {selected}")
+            print(f"   [AI] 안전 모델 강제 선택: {selected}")
             return genai.GenerativeModel(selected)
     except Exception as e:
         print(f"   [AI Model List Error] {e}")
         
-    # 최후의 수단 (하드코딩된 모델명)
+    # 최후의 수단: 리스트 조회 실패 시에도 1.5-flash로 강제 시도
     return genai.GenerativeModel('gemini-1.5-flash')
 
 def clean_text(text):
