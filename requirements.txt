@@ -2,6 +2,7 @@ feedparser
 beautifulsoup4
 google-generativeai
 google-cloud-bigquery
+db-dtypes
 pandas
 python-dotenv
 streamlit
