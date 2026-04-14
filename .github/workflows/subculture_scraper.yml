@@ -2,8 +2,8 @@ name: Subculture Curation Batch
 
 on:
   schedule:
-    - cron: '0 */3 * * *'
-  workflow_dispatch:
+    - cron: '0 */3 * * *' # 3시간마다 실행
+  workflow_dispatch:      # 수동 실행 버튼
 
 permissions:
   contents: write
@@ -20,7 +20,9 @@ jobs:
           python-version: '3.11'
           
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
         
       - name: Create GCP Credentials JSON
         env:
@@ -32,6 +34,10 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GOOGLE_APPLICATION_CREDENTIALS: gcp_key.json
         run: python main.py
+
+      - name: Clean up Credentials
+        if: always() # 작업이 실패해도 반드시 실행하여 보안 확보
+        run: rm -f gcp_key.json
 
       - name: Commit and Push Archive Data
         run: |
